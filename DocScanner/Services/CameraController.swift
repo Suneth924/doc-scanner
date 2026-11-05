@@ -3,7 +3,9 @@ import UIKit
 
 /// Runs the back camera, detects the document outline live on video frames
 /// and captures full-resolution photos.
-final class CameraController: NSObject, ObservableObject {
+/// State is confined to sessionQueue, videoQueue or the main queue as noted,
+/// so sharing the instance across those queues is safe.
+final class CameraController: NSObject, ObservableObject, @unchecked Sendable {
     enum Status { case starting, running, denied, unavailable }
 
     @Published private(set) var status: Status = .starting
