@@ -1,5 +1,4 @@
 import SwiftUI
-import VisionKit
 
 struct LibraryView: View {
     @EnvironmentObject private var store: ScanStore
@@ -54,16 +53,16 @@ struct LibraryView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .padding()
-                .disabled(!VNDocumentCameraViewController.isSupported)
             }
             .fullScreenCover(isPresented: $showingCamera) {
-                DocumentCameraView { pages in
+                ScanFlowView { pages in
                     showingCamera = false
-                    if let doc = store.add(pages: pages) { path = [doc] }
+                    Task {
+                        if let doc = await store.add(pages: pages) { path = [doc] }
+                    }
                 } onCancel: {
                     showingCamera = false
                 }
-                .ignoresSafeArea()
             }
             .sheet(isPresented: $showingTransfer) { TransferView() }
         }
