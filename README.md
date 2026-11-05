@@ -4,7 +4,8 @@ An iPhone document scanner that sends scans to a Mac, a Windows PC, or a NAS.
 
 ## Features (v0.1)
 
-- **Scan:** Apple's document camera finds page edges, straightens the page and lets you drag the corners. Multi-page scans are supported, and you can add pages later.
+- **Scan:** a custom camera outlines the page live as you aim. Edge detection combines Vision's document-segmentation model (robust on busy or low-contrast backgrounds) with its rectangle detector (precise corners), then runs again on the full-resolution photo. Multi-page scans are supported, and you can add pages later or import photos.
+- **Adjust edges:** after each capture, drag the four corners or the edges to fit the page exactly; a magnifier shows what's under your finger. Auto re-runs detection and Full Page resets the crop. The uncropped photo is kept, so you can re-adjust any page later from the scan's crop button.
 - **Enhance:** Original, Enhanced, Greyscale and Black & White filters (Core Image).
 - **Library:** grid of scans with rename, delete and add pages.
 - **Export:** multi-page PDF (A4 width) or JPEG per page.
@@ -14,7 +15,7 @@ An iPhone document scanner that sends scans to a Mac, a Windows PC, or a NAS.
 
 ## Build and run
 
-You need a Mac with Xcode 15 or later and an iPhone running iOS 17 or later. The document camera does not work in the Simulator.
+You need a Mac with Xcode 15 or later and an iPhone running iOS 17 or later. The camera does not work in the Simulator, but Import from Photos does, so you can try edge detection there.
 
 ```sh
 brew install xcodegen
@@ -31,9 +32,11 @@ The first time you use Wi‑Fi Transfer, iOS asks for Local Network permission. 
 ```
 DocScanner/
   App/       app entry point
-  Models/    ScanDocument and ScanStore (saves scans to the app's Documents folder)
-  Services/  ImageEnhancer, PDFExporter, TransferServer (HTTP over Network.framework)
-  Views/     Library, document detail, camera wrapper, share sheet, Wi‑Fi Transfer
+  Models/    ScanDocument, Quad (crop corners) and ScanStore (saves scans to the app's Documents folder)
+  Services/  EdgeDetector (Vision), PerspectiveCorrector, CameraController (AVFoundation),
+             ImageEnhancer, PDFExporter, TransferServer (HTTP over Network.framework)
+  Views/     Library, document detail, share sheet, Wi‑Fi Transfer
+  Views/Scanner/  scanning screen, live preview overlay, corner editor
 project.yml  XcodeGen spec that generates the Xcode project
 ```
 

@@ -1,7 +1,10 @@
 import Foundation
 import UIKit
 
-/// Persists scans under Documents/Scans/<id>/ as page_N.jpg plus meta.json.
+/// Persists scans under Documents/Scans/<id>/ as:
+/// - source_N.jpg: the full uncropped photo, kept so edges can be re-adjusted later
+/// - page_N.jpg: the cropped, perspective-corrected page (no filter applied)
+/// - meta.json: name, filter and the crop corners for each page
 @MainActor
 final class ScanStore: ObservableObject {
     @Published private(set) var documents: [ScanDocument] = []
@@ -21,6 +24,7 @@ final class ScanStore: ObservableObject {
     private nonisolated func folder(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString, isDirectory: true) }
     private nonisolated func metaURL(for id: UUID) -> URL { folder(for: id).appendingPathComponent("meta.json") }
     private nonisolated func pageURL(for id: UUID, index: Int) -> URL { folder(for: id).appendingPathComponent("page_\(index).jpg") }
+    private nonisolated func sourceURL(for id: UUID, index: Int) -> URL { folder(for: id).appendingPathComponent("source_\(index).jpg") }
 
     // MARK: - Loading
 
@@ -43,17 +47,15 @@ final class ScanStore: ObservableObject {
     // MARK: - CRUD
 
     @discardableResult
-    func add(pages: [UIImage]) -> ScanDocument? {
+    func add(pages: [ScannedPage]) async -> ScanDocument? {
         guard !pages.isEmpty else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm"
-        let doc = ScanDocument(name: "Scan \(formatter.string(from: .now))", pageCount: pages.count)
-        do {
-            try fm.createDirectory(at: folder(for: doc.id), withIntermediateDirectories: true)
-            for (i, page) in pages.enumerated() {
-                try page.jpegData(compressionQuality: 0.9)?.write(to: pageURL(for: doc.id, index: i))
-            }
-        } catch {
+        let doc = ScanDocument(name: "Scan \(formatter.string(from: .now))", pageCount: pages.count, crops: pages.map(\.quad))
+        let id = doc.id
+        let ok = await Task.detached { self.writePages(pages, docID: id, startingAt: 0) }.value
+        guard ok else {
+            try? fm.removeItem(at: folder(for: id))
             return nil
         }
         saveMeta(doc)
@@ -72,16 +74,68 @@ final class ScanStore: ObservableObject {
         documents.removeAll { $0.id == doc.id }
     }
 
-    func appendPages(_ pages: [UIImage], to doc: ScanDocument) {
-        var updated = doc
-        for (offset, page) in pages.enumerated() {
-            try? page.jpegData(compressionQuality: 0.9)?.write(to: pageURL(for: doc.id, index: doc.pageCount + offset))
-        }
+    func appendPages(_ pages: [ScannedPage], to doc: ScanDocument) async {
+        guard !pages.isEmpty, let current = documents.first(where: { $0.id == doc.id }) else { return }
+        let id = current.id
+        let start = current.pageCount
+        _ = await Task.detached { self.writePages(pages, docID: id, startingAt: start) }.value
+        guard var updated = documents.first(where: { $0.id == id }) else { return }
+        let existing = (0..<updated.pageCount).map { updated.crop(at: $0) }
+        updated.crops = existing + pages.map(\.quad)
         updated.pageCount += pages.count
         update(updated)
     }
 
+    /// Re-crops one page from its source photo with new corners.
+    func updateCrop(_ quad: Quad, page index: Int, of doc: ScanDocument) async {
+        guard let current = documents.first(where: { $0.id == doc.id }),
+              (0..<current.pageCount).contains(index) else { return }
+        let id = current.id
+        let ok = await Task.detached { () -> Bool in
+            guard let source = self.sourceImage(for: current, index: index) else { return false }
+            return self.writePages([ScannedPage(source: source, quad: quad)], docID: id, startingAt: index)
+        }.value
+        guard ok, var updated = documents.first(where: { $0.id == id }) else { return }
+        var crops = (0..<updated.pageCount).map { updated.crop(at: $0) }
+        crops[index] = quad
+        updated.crops = crops
+        update(updated)
+    }
+
+    // MARK: - Writing pages
+
+    private nonisolated func writePages(_ pages: [ScannedPage], docID: UUID, startingAt start: Int) -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: folder(for: docID), withIntermediateDirectories: true)
+            for (offset, page) in pages.enumerated() {
+                try writePage(page, docID: docID, index: start + offset)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private nonisolated func writePage(_ page: ScannedPage, docID: UUID, index: Int) throws {
+        let source = page.source.normalizedOrientation()
+        // The source is written once and never re-encoded, so repeated edge
+        // adjustments don't lose quality. Older scans have no source file;
+        // their first adjustment promotes the existing page to the source.
+        let sourceURL = sourceURL(for: docID, index: index)
+        if !FileManager.default.fileExists(atPath: sourceURL.path) {
+            try source.jpegData(compressionQuality: 0.92)?.write(to: sourceURL, options: .atomic)
+        }
+        let cropped = PerspectiveCorrector.correct(source, to: page.quad)
+        try cropped.jpegData(compressionQuality: 0.9)?.write(to: pageURL(for: docID, index: index), options: .atomic)
+    }
+
     // MARK: - Reading pages
+
+    /// The uncropped photo for a page (falls back to the page itself for older scans).
+    nonisolated func sourceImage(for doc: ScanDocument, index: Int) -> UIImage? {
+        UIImage(contentsOfFile: sourceURL(for: doc.id, index: index).path)
+            ?? UIImage(contentsOfFile: pageURL(for: doc.id, index: index).path)
+    }
 
     nonisolated func originalPages(for doc: ScanDocument) -> [UIImage] {
         (0..<doc.pageCount).compactMap { UIImage(contentsOfFile: pageURL(for: doc.id, index: $0).path) }

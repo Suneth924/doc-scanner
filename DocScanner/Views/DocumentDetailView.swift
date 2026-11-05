@@ -11,6 +11,15 @@ struct DocumentDetailView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var addingPages = false
+    @State private var currentPage = 0
+    @State private var cropTarget: CropTarget?
+
+    private struct CropTarget: Identifiable {
+        let id = UUID()
+        let index: Int
+        let image: UIImage
+        let quad: Quad
+    }
 
     private var doc: ScanDocument? { store.documents.first { $0.id == docID } }
 
@@ -24,7 +33,7 @@ struct DocumentDetailView: View {
 
     private func content(_ doc: ScanDocument) -> some View {
         VStack(spacing: 0) {
-            TabView {
+            TabView(selection: $currentPage) {
                 ForEach(pages.indices, id: \.self) { i in
                     Image(uiImage: pages[i])
                         .resizable()
@@ -38,10 +47,21 @@ struct DocumentDetailView: View {
             .background(Color(.secondarySystemBackground))
             .overlay { if pages.isEmpty || isWorking { ProgressView() } }
 
-            Picker("Filter", selection: filterBinding(doc)) {
-                ForEach(ScanFilter.allCases) { Text($0.title).tag($0) }
+            HStack(spacing: 12) {
+                Button { editCrop(doc) } label: {
+                    Label("Adjust Edges", systemImage: "crop")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.bordered)
+                .disabled(pages.isEmpty || isWorking)
+                .accessibilityLabel("Adjust edges of this page")
+
+                Picker("Filter", selection: filterBinding(doc)) {
+                    ForEach(ScanFilter.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
             }
-            .pickerStyle(.segmented)
             .padding()
         }
         .navigationTitle(doc.name)
@@ -58,6 +78,7 @@ struct DocumentDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Rename", systemImage: "pencil") { newName = doc.name; renaming = true }
+                    Button("Adjust edges", systemImage: "crop") { editCrop(doc) }
                     Button("Add pages", systemImage: "plus.viewfinder") { addingPages = true }
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         store.delete(doc)
@@ -80,13 +101,28 @@ struct DocumentDetailView: View {
             Button("Cancel", role: .cancel) {}
         }
         .fullScreenCover(isPresented: $addingPages) {
-            DocumentCameraView { newPages in
+            ScanFlowView { newPages in
                 addingPages = false
-                store.appendPages(newPages, to: doc)
+                Task { await store.appendPages(newPages, to: doc) }
             } onCancel: {
                 addingPages = false
             }
-            .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $cropTarget) { target in
+            CropEditorView(
+                image: target.image,
+                initialQuad: target.quad,
+                title: "Page \(target.index + 1)",
+                onDone: { quad in
+                    cropTarget = nil
+                    isWorking = true
+                    Task {
+                        await store.updateCrop(quad, page: target.index, of: doc)
+                        isWorking = false
+                    }
+                },
+                onCancel: { cropTarget = nil }
+            )
         }
     }
 
@@ -106,6 +142,20 @@ struct DocumentDetailView: View {
         let store = store
         pages = await Task.detached { store.filteredPages(for: doc) }.value
         isWorking = false
+    }
+
+    /// Opens the corner editor on the uncropped photo of the visible page.
+    private func editCrop(_ doc: ScanDocument) {
+        let index = min(currentPage, doc.pageCount - 1)
+        guard index >= 0 else { return }
+        let store = store
+        isWorking = true
+        Task {
+            let image = await Task.detached { store.sourceImage(for: doc, index: index)?.normalizedOrientation() }.value
+            isWorking = false
+            guard let image else { return }
+            cropTarget = CropTarget(index: index, image: image, quad: doc.crop(at: index))
+        }
     }
 
     private func share(_ doc: ScanDocument, asPDF: Bool) {
