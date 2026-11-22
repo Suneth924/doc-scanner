@@ -27,6 +27,23 @@ In Xcode, choose your Apple ID team under Signing & Capabilities, plug in your i
 
 The first time you use Wi‑Fi Transfer, iOS asks for Local Network permission. Allow it.
 
+## Install with AltStore
+
+With a free Apple ID, apps installed from Xcode stop opening after 7 days. AltStore refreshes them for you, so this is the easier way to keep DocScanner on your phone.
+
+1. Build the IPA on your Mac:
+
+   ```sh
+   scripts/build-ipa.sh
+   ```
+
+   It runs `xcodegen`, builds an unsigned Release app for iPhone, and writes `build/DocScanner.ipa`. The path is printed at the end. AltStore signs the app with your Apple ID when it installs it, so no signing setup is needed. Set `OUTPUT_DIR=~/Desktop` to put the IPA somewhere else.
+2. Get the IPA onto your iPhone, for example with AirDrop to Files, or iCloud Drive.
+3. Make sure AltServer is running on your Mac and your iPhone is on the same Wi‑Fi (or plugged in).
+4. In AltStore on the iPhone, open **My Apps**, tap **+**, and choose `DocScanner.ipa`.
+
+To update, run the script again and install the new IPA the same way. If the build fails, the script prints the errors and the full log is in `build/xcodebuild.log`.
+
 ## Project layout
 
 ```
@@ -38,6 +55,7 @@ DocScanner/
   Views/     Library, document detail, share sheet, Wi‑Fi Transfer
   Views/Scanner/  scanning screen, live preview overlay, corner editor
 project.yml  XcodeGen spec that generates the Xcode project
+scripts/build-ipa.sh  builds an unsigned DocScanner.ipa for AltStore
 ```
 
 ## Next ideas
